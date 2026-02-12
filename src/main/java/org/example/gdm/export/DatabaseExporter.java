@@ -36,7 +36,7 @@ public interface DatabaseExporter extends AutoCloseable {
      * @throws ExportException if export fails
      */
     default ExportResult exportGraph(DependencyGraph graph) throws ExportException {
-        return exportGraph(graph, Set.of());
+        return exportGraph(graph, Set.of(), "ProjectModule");
     }
 
     /**
@@ -49,7 +49,22 @@ public interface DatabaseExporter extends AutoCloseable {
      * @return the export result with statistics
      * @throws ExportException if export fails
      */
-    ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs) throws ExportException;
+    default ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs) throws ExportException {
+        return exportGraph(graph, projectModuleGAVs, "ProjectModule");
+    }
+
+    /**
+     * Exports the dependency graph to the database with a custom node label for project modules.
+     * For modules that are part of the project structure (identified by projectModuleGAVs),
+     * dependencies will originate from nodes with the specified label instead of MavenModule nodes.
+     *
+     * @param graph             the dependency graph to export
+     * @param projectModuleGAVs set of GAV strings for modules that are project modules
+     * @param nodeLabel         the label to use for project module nodes (default: "ProjectModule")
+     * @return the export result with statistics
+     * @throws ExportException if export fails
+     */
+    ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs, String nodeLabel) throws ExportException;
 
     /**
      * Exports the project module structure to the database.
@@ -62,6 +77,20 @@ public interface DatabaseExporter extends AutoCloseable {
      * @throws ExportException if export fails
      */
     default int exportProjectStructure(ProjectStructure projectStructure) throws ExportException {
+        return exportProjectStructure(projectStructure, "ProjectModule");
+    }
+
+    /**
+     * Exports the project module structure to the database with a custom node label.
+     * This creates nodes with the specified label and CONTAINS_MODULE relationships.
+     * The nodes will have a property "ProjectModule: true" to identify them as project modules.
+     *
+     * @param projectStructure the project structure to export
+     * @param nodeLabel        the label to use for project module nodes (default: "ProjectModule")
+     * @return the number of project modules exported
+     * @throws ExportException if export fails
+     */
+    default int exportProjectStructure(ProjectStructure projectStructure, String nodeLabel) throws ExportException {
         // Default no-op implementation for backward compatibility
         return 0;
     }

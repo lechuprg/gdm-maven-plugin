@@ -84,7 +84,7 @@ public class Neo4jExporter implements DatabaseExporter {
     }
 
     @Override
-    public ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs) throws ExportException {
+    public ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs, String nodeLabel) throws ExportException {
         long startTime = System.currentTimeMillis();
 
         try (Session session = driver.session()) {
@@ -106,7 +106,7 @@ public class Neo4jExporter implements DatabaseExporter {
 
                 // 2. Delete old dependencies from root module
                 MavenModule root = graph.getRootModule();
-                deleteOldDependencies(tx, root, projectModuleGAVs);
+                deleteOldDependencies(tx, root, projectModuleGAVs, nodeLabel);
 
                 // 3. Create new dependencies in batches
                 List<Dependency> dependencies = graph.getDependencies();
@@ -115,7 +115,7 @@ public class Neo4jExporter implements DatabaseExporter {
                     List<Dependency> batch = dependencies.subList(i, end);
 
                     for (Dependency dep : batch) {
-                        createDependency(tx, dep, projectModuleGAVs);
+                        createDependency(tx, dep, projectModuleGAVs, nodeLabel);
                         dependenciesExported++;
                         if (!dep.isResolved()) {
                             conflictsDetected++;
@@ -141,20 +141,20 @@ public class Neo4jExporter implements DatabaseExporter {
     }
 
     @Override
-    public int exportProjectStructure(ProjectStructure projectStructure) throws ExportException {
-        log.info("Exporting project structure: {} modules", projectStructure.getModuleCount());
+    public int exportProjectStructure(ProjectStructure projectStructure, String nodeLabel) throws ExportException {
+        log.info("Exporting project structure: {} modules with label '{}'", projectStructure.getModuleCount(), nodeLabel);
 
         try (Session session = driver.session()) {
             int modulesExported = 0;
 
-            // 1. Ensure ProjectModule uniqueness constraint exists (separate from transaction)
+            // 1. Ensure uniqueness constraint exists for the node label (separate from transaction)
             try {
                 session.run(
-                        "CREATE CONSTRAINT project_module_unique IF NOT EXISTS " +
-                        "FOR (p:ProjectModule) " +
+                        "CREATE CONSTRAINT " + nodeLabel.toLowerCase() + "_unique IF NOT EXISTS " +
+                        "FOR (p:" + nodeLabel + ") " +
                         "REQUIRE (p.groupId, p.artifactId, p.version) IS UNIQUE"
                 );
-                log.debug("ProjectModule uniqueness constraint ensured");
+                log.debug("{} uniqueness constraint ensured", nodeLabel);
             } catch (Exception e) {
                 // Constraint may already exist, which is fine
                 log.debug("Constraint creation skipped (may already exist): {}", e.getMessage());
@@ -163,22 +163,22 @@ public class Neo4jExporter implements DatabaseExporter {
             // 2. Now execute write operations in a transaction
             try (Transaction tx = session.beginTransaction()) {
 
-                // 2. Create all ProjectModule nodes
+                // 2. Create all nodes with the specified label
                 for (ProjectModule module : projectStructure.getAllModules()) {
-                    upsertProjectModule(tx, module);
+                    upsertProjectModule(tx, module, nodeLabel);
                     modulesExported++;
                 }
 
                 // 3. Create CONTAINS_MODULE relationships
                 for (ProjectStructure.ModuleRelationship rel : projectStructure.getContainsModuleRelationships()) {
-                    createContainsModuleRelationship(tx, rel.parent(), rel.child());
+                    createContainsModuleRelationship(tx, rel.parent(), rel.child(), nodeLabel);
                 }
 
-                // Note: ProjectModule nodes are NOT linked to MavenModule nodes via IS_A.
-                // ProjectModules directly participate in DEPENDS_ON relationships.
+                // Note: Nodes are NOT linked to MavenModule nodes via IS_A.
+                // They directly participate in DEPENDS_ON relationships.
 
                 tx.commit();
-                log.info("Project structure export committed: {} modules", modulesExported);
+                log.info("Project structure export committed: {} modules with label '{}'", modulesExported, nodeLabel);
             }
 
             return modulesExported;
@@ -344,14 +344,14 @@ public class Neo4jExporter implements DatabaseExporter {
         );
     }
 
-    private void deleteOldDependencies(Transaction tx, MavenModule source, Set<String> projectModuleGAVs) {
+    private void deleteOldDependencies(Transaction tx, MavenModule source, Set<String> projectModuleGAVs, String nodeLabel) {
         String sourceGAV = source.getGAV();
         boolean isProjectModule = projectModuleGAVs.contains(sourceGAV);
 
         if (isProjectModule) {
-            // Delete dependencies from ProjectModule node
+            // Delete dependencies from node with custom label
             tx.run(
-                    "MATCH (m:ProjectModule {groupId: $groupId, artifactId: $artifactId, version: $version})" +
+                    "MATCH (m:" + nodeLabel + " {groupId: $groupId, artifactId: $artifactId, version: $version})" +
                     "-[r:DEPENDS_ON]->() DELETE r",
                     Map.of(
                             "groupId", source.getGroupId(),
@@ -373,14 +373,14 @@ public class Neo4jExporter implements DatabaseExporter {
         }
     }
 
-    private void createDependency(Transaction tx, Dependency dep, Set<String> projectModuleGAVs) {
+    private void createDependency(Transaction tx, Dependency dep, Set<String> projectModuleGAVs, String nodeLabel) {
         String sourceGAV = dep.getSource().getGAV();
         String targetGAV = dep.getTarget().getGAV();
         boolean sourceIsProject = projectModuleGAVs.contains(sourceGAV);
         boolean targetIsProject = projectModuleGAVs.contains(targetGAV);
 
-        String sourceLabel = sourceIsProject ? "ProjectModule" : "MavenModule";
-        String targetLabel = targetIsProject ? "ProjectModule" : "MavenModule";
+        String sourceLabel = sourceIsProject ? nodeLabel : "MavenModule";
+        String targetLabel = targetIsProject ? nodeLabel : "MavenModule";
 
         tx.run(
                 "MATCH (source:" + sourceLabel + " {groupId: $sourceGroupId, artifactId: $sourceArtifactId, version: $sourceVersion}), " +
@@ -424,12 +424,14 @@ public class Neo4jExporter implements DatabaseExporter {
 
 
     /**
-     * Upserts a ProjectModule node.
+     * Upserts a project module node with the specified label.
+     * The node will have a property "ProjectModule: true" to identify it as a project module.
      */
-    private void upsertProjectModule(Transaction tx, ProjectModule module) {
+    private void upsertProjectModule(Transaction tx, ProjectModule module, String nodeLabel) {
         tx.run(
-                "MERGE (p:ProjectModule {groupId: $groupId, artifactId: $artifactId, version: $version}) " +
+                "MERGE (p:" + nodeLabel + " {groupId: $groupId, artifactId: $artifactId, version: $version}) " +
                 "SET p.isRootProject = $isRootProject, " +
+                "    p.ProjectModule = true, " +
                 "    p.exportTimestamp = datetime()",
                 Map.of(
                         "groupId", module.getGroupId(),
@@ -438,16 +440,16 @@ public class Neo4jExporter implements DatabaseExporter {
                         "isRootProject", module.isRootProject()
                 )
         );
-        log.debug("Upserted ProjectModule: {}:{}", module.getArtifactId(), module.getVersion());
+        log.debug("Upserted {} node: {}:{}", nodeLabel, module.getArtifactId(), module.getVersion());
     }
 
     /**
-     * Creates a CONTAINS_MODULE relationship between parent and child ProjectModules.
+     * Creates a CONTAINS_MODULE relationship between parent and child nodes.
      */
-    private void createContainsModuleRelationship(Transaction tx, ProjectModule parent, ProjectModule child) {
+    private void createContainsModuleRelationship(Transaction tx, ProjectModule parent, ProjectModule child, String nodeLabel) {
         tx.run(
-                "MATCH (parent:ProjectModule {groupId: $parentGroupId, artifactId: $parentArtifactId, version: $parentVersion}), " +
-                "      (child:ProjectModule {groupId: $childGroupId, artifactId: $childArtifactId, version: $childVersion}) " +
+                "MATCH (parent:" + nodeLabel + " {groupId: $parentGroupId, artifactId: $parentArtifactId, version: $parentVersion}), " +
+                "      (child:" + nodeLabel + " {groupId: $childGroupId, artifactId: $childArtifactId, version: $childVersion}) " +
                 "MERGE (parent)-[:CONTAINS_MODULE]->(child)",
                 Map.ofEntries(
                         Map.entry("parentGroupId", parent.getGroupId()),

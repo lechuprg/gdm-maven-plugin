@@ -63,6 +63,7 @@ This Maven plugin exports project dependency graphs to a database (Neo4j or Orac
 | `keepOnlyLatestVersion` | Boolean | No | `false` | Delete old versions after export |
 | `failOnError` | Boolean | No | `false` | Fail build on export error |
 | `serverId` | String | No | - | Server ID from `settings.xml` for credentials |
+| `nodeLabel` | String | No | `ProjectModule` | Custom node label for project modules in Neo4j. The node will have a `ProjectModule: true` property. |
 
 ### Filter Patterns
 
@@ -81,7 +82,8 @@ The required database schema is defined in `database-schema.sql`. You must creat
 
 ### Neo4j Model
 - **Nodes**: `(:MavenModule {groupId, artifactId, version, ...})`
-- **Relationships**: `-[:DEPENDS_ON {scope, depth, isResolved, ...}]->`
+- **Project Module Nodes**: `(:<nodeLabel> {groupId, artifactId, version, ProjectModule: true, ...})` - The label is configurable via `nodeLabel` parameter (default: `ProjectModule`). All project module nodes have a `ProjectModule: true` property for easy identification.
+- **Relationships**: `-[:DEPENDS_ON {scope, depth, isResolved, ...}]->`, `-[:CONTAINS_MODULE]->`
 
 ### Oracle Model
 - **Tables**: `maven_modules`, `maven_dependencies`, `gdm_schema_version`

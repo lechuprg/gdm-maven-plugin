@@ -74,6 +74,12 @@ public class PluginConfiguration {
      */
     private String serverId;
 
+    /**
+     * Custom node label for project modules in Neo4j.
+     * Default: "ProjectModule"
+     */
+    private String nodeLabel = "ProjectModule";
+
     // Constructors
 
     public PluginConfiguration() {
@@ -174,6 +180,14 @@ public class PluginConfiguration {
         this.serverId = serverId;
     }
 
+    public String getNodeLabel() {
+        return nodeLabel;
+    }
+
+    public void setNodeLabel(String nodeLabel) {
+        this.nodeLabel = nodeLabel != null ? nodeLabel : "ProjectModule";
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -189,14 +203,15 @@ public class PluginConfiguration {
                 Objects.equals(exportScopes, that.exportScopes) &&
                 Objects.equals(includeFilters, that.includeFilters) &&
                 Objects.equals(excludeFilters, that.excludeFilters) &&
-                Objects.equals(serverId, that.serverId);
+                Objects.equals(serverId, that.serverId) &&
+                Objects.equals(nodeLabel, that.nodeLabel);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(databaseType, connectionUrl, username, password,
                 transitiveDepth, exportScopes, includeFilters, excludeFilters,
-                keepOnlyLatestVersion, failOnError, serverId);
+                keepOnlyLatestVersion, failOnError, serverId, nodeLabel);
     }
 
     @Override
@@ -213,6 +228,7 @@ public class PluginConfiguration {
                 ", keepOnlyLatestVersion=" + keepOnlyLatestVersion +
                 ", failOnError=" + failOnError +
                 ", serverId='" + serverId + '\'' +
+                ", nodeLabel='" + nodeLabel + '\'' +
                 '}';
     }
 
@@ -274,6 +290,11 @@ public class PluginConfiguration {
 
         public Builder serverId(String serverId) {
             config.setServerId(serverId);
+            return this;
+        }
+
+        public Builder nodeLabel(String nodeLabel) {
+            config.setNodeLabel(nodeLabel);
             return this;
         }
 

@@ -82,11 +82,12 @@ class Neo4jProjectModuleExportIT {
             // Verify properties
             var result = session.run(
                     "MATCH (n:ProjectModule {artifactId: 'single-app'}) " +
-                    "RETURN n.groupId AS groupId, n.version AS version, n.isRootProject AS isRoot");
+                    "RETURN n.groupId AS groupId, n.version AS version, n.isRootProject AS isRoot, n.ProjectModule AS isProjectModule");
             var record = result.single();
             assertThat(record.get("groupId").asString()).isEqualTo("com.example");
             assertThat(record.get("version").asString()).isEqualTo("1.0.0");
             assertThat(record.get("isRoot").asBoolean()).isTrue();
+            assertThat(record.get("isProjectModule").asBoolean()).isTrue();
         }
     }
 
@@ -295,6 +296,45 @@ class Neo4jProjectModuleExportIT {
                         return labelsOrTypes.contains("ProjectModule");
                     });
             assertThat(hasProjectModuleConstraint).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("should export project structure with custom node label")
+    void shouldExportProjectStructureWithCustomNodeLabel() throws Exception {
+        // Given
+        ProjectStructure structure = ProjectStructure.singleModule(
+                "com.example", "custom-label-app", "1.0.0");
+        String customLabel = "MyCustomModule";
+
+        // When
+        int exported = exporter.exportProjectStructure(structure, customLabel);
+
+        // Then
+        assertThat(exported).isEqualTo(1);
+
+        try (Session session = driver.session()) {
+            // Verify node with custom label was created
+            long moduleCount = session.run(
+                    "MATCH (n:MyCustomModule) RETURN count(n) AS count")
+                    .single().get("count").asLong();
+            assertThat(moduleCount).isEqualTo(1);
+
+            // Verify properties including ProjectModule flag
+            var result = session.run(
+                    "MATCH (n:MyCustomModule {artifactId: 'custom-label-app'}) " +
+                    "RETURN n.groupId AS groupId, n.version AS version, n.isRootProject AS isRoot, n.ProjectModule AS isProjectModule");
+            var record = result.single();
+            assertThat(record.get("groupId").asString()).isEqualTo("com.example");
+            assertThat(record.get("version").asString()).isEqualTo("1.0.0");
+            assertThat(record.get("isRoot").asBoolean()).isTrue();
+            assertThat(record.get("isProjectModule").asBoolean()).isTrue();
+
+            // Verify no ProjectModule label node was created
+            long projectModuleCount = session.run(
+                    "MATCH (n:ProjectModule) RETURN count(n) AS count")
+                    .single().get("count").asLong();
+            assertThat(projectModuleCount).isEqualTo(0);
         }
     }
 }

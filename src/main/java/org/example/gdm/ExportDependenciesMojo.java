@@ -115,6 +115,14 @@ public class ExportDependenciesMojo extends AbstractMojo {
     @Parameter(property = "gdm.serverId")
     private String serverId;
 
+    /**
+     * Custom node label for project modules in Neo4j.
+     * Default: "ProjectModule".
+     * The node will have a property "ProjectModule: true" to identify it.
+     */
+    @Parameter(property = "gdm.nodeLabel", defaultValue = "ProjectModule")
+    private String nodeLabel;
+
     // ========== Maven Injected Components ==========
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
@@ -197,6 +205,7 @@ public class ExportDependenciesMojo extends AbstractMojo {
                 .keepOnlyLatestVersion(keepOnlyLatestVersion)
                 .failOnError(failOnError)
                 .serverId(serverId)
+                .nodeLabel(nodeLabel)
                 .build();
     }
 
@@ -279,8 +288,8 @@ public class ExportDependenciesMojo extends AbstractMojo {
             getLog().info("Resolving project structure...");
             ProjectStructureResolver structureResolver = new ProjectStructureResolver(project, session);
             ProjectStructure projectStructure = structureResolver.resolve();
-            getLog().info("Exporting project structure: " + projectStructure.getModuleCount() + " module(s)");
-            int projectModulesExported = exporter.exportProjectStructure(projectStructure);
+            getLog().info("Exporting project structure: " + projectStructure.getModuleCount() + " module(s) with label '" + config.getNodeLabel() + "'");
+            int projectModulesExported = exporter.exportProjectStructure(projectStructure, config.getNodeLabel());
             getLog().info("Project modules exported: " + projectModulesExported);
 
             // 7. Collect project module GAVs (these will NOT get MavenModule nodes)
@@ -290,7 +299,7 @@ public class ExportDependenciesMojo extends AbstractMojo {
 
             // 8. Export dependency graph (uses ProjectModule nodes for project modules)
             getLog().info("Exporting dependency graph...");
-            ExportResult result = exporter.exportGraph(filteredGraph, projectModuleGAVs);
+            ExportResult result = exporter.exportGraph(filteredGraph, projectModuleGAVs, config.getNodeLabel());
 
             // 9. Cleanup old versions if configured
             int deletedVersions = 0;
@@ -387,6 +396,7 @@ public class ExportDependenciesMojo extends AbstractMojo {
 
         getLog().info("  Keep only latest version: " + config.isKeepOnlyLatestVersion());
         getLog().info("  Fail on error: " + config.isFailOnError());
+        getLog().info("  Node label: " + config.getNodeLabel());
         getLog().info("============================================================");
     }
 
