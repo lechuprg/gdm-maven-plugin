@@ -2,6 +2,7 @@ package org.example.gdm.export;
 
 import org.example.gdm.exception.ExportException;
 import org.example.gdm.model.DependencyGraph;
+import org.example.gdm.model.ProjectStructure;
 
 /**
  * Interface for database exporters.
@@ -33,6 +34,20 @@ public interface DatabaseExporter extends AutoCloseable {
      * @throws ExportException if export fails
      */
     ExportResult exportGraph(DependencyGraph graph) throws ExportException;
+
+    /**
+     * Exports the project module structure to the database.
+     * This creates ProjectModule nodes and CONTAINS_MODULE relationships,
+     * as well as IS_A relationships linking ProjectModules to MavenModules.
+     *
+     * @param projectStructure the project structure to export
+     * @return the number of project modules exported
+     * @throws ExportException if export fails
+     */
+    default int exportProjectStructure(ProjectStructure projectStructure) throws ExportException {
+        // Default no-op implementation for backward compatibility
+        return 0;
+    }
 
     /**
      * Cleans up old versions of a module, keeping only the latest.

@@ -21,8 +21,10 @@ import org.example.gdm.export.neo4j.Neo4jExporter;
 import org.example.gdm.export.oracle.OracleExporter;
 import org.example.gdm.filter.FilterEngine;
 import org.example.gdm.model.DependencyGraph;
+import org.example.gdm.model.ProjectStructure;
 import org.example.gdm.resolver.DependencyResolver;
 import org.example.gdm.resolver.MavenDependencyResolver;
+import org.example.gdm.resolver.ProjectStructureResolver;
 import org.example.gdm.version.VersionCleanupService;
 
 import java.util.List;
@@ -274,6 +276,14 @@ public class ExportDependenciesMojo extends AbstractMojo {
             getLog().info("Exporting dependency graph...");
             ExportResult result = exporter.exportGraph(filteredGraph);
 
+            // 6.5 Export project structure (ProjectModule nodes and relationships)
+            getLog().info("Resolving project structure...");
+            ProjectStructureResolver structureResolver = new ProjectStructureResolver(project, session);
+            ProjectStructure projectStructure = structureResolver.resolve();
+            getLog().info("Exporting project structure: " + projectStructure.getModuleCount() + " module(s)");
+            int projectModulesExported = exporter.exportProjectStructure(projectStructure);
+            getLog().info("Project modules exported: " + projectModulesExported);
+
             // 7. Cleanup old versions if configured
             int deletedVersions = 0;
             if (config.isKeepOnlyLatestVersion()) {
@@ -283,7 +293,7 @@ public class ExportDependenciesMojo extends AbstractMojo {
             }
 
             // 8. Log results
-            logExportResult(result, deletedVersions);
+            logExportResult(result, projectModulesExported, deletedVersions);
 
         } finally {
             exporter.close();
@@ -313,12 +323,13 @@ public class ExportDependenciesMojo extends AbstractMojo {
     /**
      * Logs the export result.
      */
-    private void logExportResult(ExportResult result, int deletedVersions) {
+    private void logExportResult(ExportResult result, int projectModulesExported, int deletedVersions) {
         getLog().info("============================================================");
         getLog().info("Export Results:");
-        getLog().info("  Modules exported: " + result.getModulesExported());
+        getLog().info("  Maven modules exported: " + result.getModulesExported());
         getLog().info("  Dependencies exported: " + result.getDependenciesExported());
         getLog().info("  Conflicts detected: " + result.getConflictsDetected());
+        getLog().info("  Project modules exported: " + projectModulesExported);
         if (deletedVersions > 0) {
             getLog().info("  Old versions deleted: " + deletedVersions);
         }

@@ -5,6 +5,8 @@ import org.example.gdm.export.*;
 import org.example.gdm.model.Dependency;
 import org.example.gdm.model.DependencyGraph;
 import org.example.gdm.model.MavenModule;
+import org.example.gdm.model.ProjectModule;
+import org.example.gdm.model.ProjectStructure;
 import org.neo4j.driver.*;
 import org.neo4j.driver.Record;
 import org.neo4j.driver.exceptions.ServiceUnavailableException;
@@ -131,6 +133,58 @@ public class Neo4jExporter implements DatabaseExporter {
             throw new ExportException("Neo4j service unavailable: " + e.getMessage(), e);
         } catch (Exception e) {
             throw new ExportException("Export failed: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public int exportProjectStructure(ProjectStructure projectStructure) throws ExportException {
+        log.info("Exporting project structure: {} modules", projectStructure.getModuleCount());
+
+        try (Session session = driver.session()) {
+            int modulesExported = 0;
+
+            // 1. Ensure ProjectModule uniqueness constraint exists (separate from transaction)
+            try {
+                session.run(
+                        "CREATE CONSTRAINT project_module_unique IF NOT EXISTS " +
+                        "FOR (p:ProjectModule) " +
+                        "REQUIRE (p.groupId, p.artifactId, p.version) IS UNIQUE"
+                );
+                log.debug("ProjectModule uniqueness constraint ensured");
+            } catch (Exception e) {
+                // Constraint may already exist, which is fine
+                log.debug("Constraint creation skipped (may already exist): {}", e.getMessage());
+            }
+
+            // 2. Now execute write operations in a transaction
+            try (Transaction tx = session.beginTransaction()) {
+
+                // 2. Create all ProjectModule nodes
+                for (ProjectModule module : projectStructure.getAllModules()) {
+                    upsertProjectModule(tx, module);
+                    modulesExported++;
+                }
+
+                // 3. Create CONTAINS_MODULE relationships
+                for (ProjectStructure.ModuleRelationship rel : projectStructure.getContainsModuleRelationships()) {
+                    createContainsModuleRelationship(tx, rel.parent(), rel.child());
+                }
+
+                // 4. Create IS_A relationships linking ProjectModules to MavenModules
+                for (ProjectModule module : projectStructure.getAllModules()) {
+                    createIsARelationship(tx, module);
+                }
+
+                tx.commit();
+                log.info("Project structure export committed: {} modules", modulesExported);
+            }
+
+            return modulesExported;
+
+        } catch (ServiceUnavailableException e) {
+            throw new ExportException("Neo4j service unavailable: " + e.getMessage(), e);
+        } catch (Exception e) {
+            throw new ExportException("Project structure export failed: " + e.getMessage(), e);
         }
     }
 
@@ -285,6 +339,65 @@ public class Neo4jExporter implements DatabaseExporter {
             return ((java.time.LocalDateTime) value).toInstant(ZoneOffset.UTC);
         }
         return Instant.now();
+    }
+
+    // ========== ProjectModule Methods ==========
+
+
+    /**
+     * Upserts a ProjectModule node.
+     */
+    private void upsertProjectModule(Transaction tx, ProjectModule module) {
+        tx.run(
+                "MERGE (p:ProjectModule {groupId: $groupId, artifactId: $artifactId, version: $version}) " +
+                "SET p.isRootProject = $isRootProject, " +
+                "    p.exportTimestamp = datetime()",
+                Map.of(
+                        "groupId", module.getGroupId(),
+                        "artifactId", module.getArtifactId(),
+                        "version", module.getVersion(),
+                        "isRootProject", module.isRootProject()
+                )
+        );
+        log.debug("Upserted ProjectModule: {}:{}", module.getArtifactId(), module.getVersion());
+    }
+
+    /**
+     * Creates a CONTAINS_MODULE relationship between parent and child ProjectModules.
+     */
+    private void createContainsModuleRelationship(Transaction tx, ProjectModule parent, ProjectModule child) {
+        tx.run(
+                "MATCH (parent:ProjectModule {groupId: $parentGroupId, artifactId: $parentArtifactId, version: $parentVersion}), " +
+                "      (child:ProjectModule {groupId: $childGroupId, artifactId: $childArtifactId, version: $childVersion}) " +
+                "MERGE (parent)-[:CONTAINS_MODULE]->(child)",
+                Map.ofEntries(
+                        Map.entry("parentGroupId", parent.getGroupId()),
+                        Map.entry("parentArtifactId", parent.getArtifactId()),
+                        Map.entry("parentVersion", parent.getVersion()),
+                        Map.entry("childGroupId", child.getGroupId()),
+                        Map.entry("childArtifactId", child.getArtifactId()),
+                        Map.entry("childVersion", child.getVersion())
+                )
+        );
+        log.debug("Created CONTAINS_MODULE: {} -> {}", parent.getArtifactId(), child.getArtifactId());
+    }
+
+    /**
+     * Creates an IS_A relationship linking a ProjectModule to its corresponding MavenModule.
+     * Only creates the relationship if the MavenModule exists.
+     */
+    private void createIsARelationship(Transaction tx, ProjectModule module) {
+        tx.run(
+                "MATCH (p:ProjectModule {groupId: $groupId, artifactId: $artifactId, version: $version}), " +
+                "      (m:MavenModule {groupId: $groupId, artifactId: $artifactId, version: $version}) " +
+                "MERGE (p)-[:IS_A]->(m)",
+                Map.of(
+                        "groupId", module.getGroupId(),
+                        "artifactId", module.getArtifactId(),
+                        "version", module.getVersion()
+                )
+        );
+        log.debug("Created IS_A relationship for: {}:{}", module.getArtifactId(), module.getVersion());
     }
 
     private record VersionInfo(String version, long nodeId) {}
