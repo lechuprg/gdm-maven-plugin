@@ -189,7 +189,7 @@ public class Neo4jExporter implements DatabaseExporter {
     }
 
     @Override
-    public int cleanupOldVersions(String groupId, String artifactId) throws ExportException {
+    public int cleanupOldVersions(String groupId, String artifactId, Set<String> exportedModules) throws ExportException {
         return retryExecutor.execute(() -> {
             try (Session session = driver.session()) {
                 // Fetch all versions
@@ -222,11 +222,25 @@ public class Neo4jExporter implements DatabaseExporter {
                     return v1.compareTo(v2);
                 });
 
-                // Keep the first (latest), delete the rest
-                List<Long> toDelete = versions.subList(1, versions.size())
-                        .stream()
-                        .map(v -> v.nodeId)
-                        .toList();
+                // Keep the first (latest), check the rest for external dependencies
+                List<Long> toDelete = new ArrayList<>();
+                for (int i = 1; i < versions.size(); i++) {
+                    VersionInfo oldVersion = versions.get(i);
+                    String oldGAV = groupId + ":" + artifactId + ":" + oldVersion.version;
+
+                    // Check if this old version has incoming dependencies from modules outside current export
+                    if (!hasExternalDependencies(session, groupId, artifactId, oldVersion.version, exportedModules)) {
+                        toDelete.add(oldVersion.nodeId);
+                        log.debug("Old version {} has no external dependencies, will be deleted", oldGAV);
+                    } else {
+                        log.info("Keeping old version {} - has dependencies from other projects", oldGAV);
+                    }
+                }
+
+                if (toDelete.isEmpty()) {
+                    log.debug("No old versions eligible for deletion for {}:{}", groupId, artifactId);
+                    return 0;
+                }
 
                 // Mark as not latest
                 session.run(
@@ -234,13 +248,13 @@ public class Neo4jExporter implements DatabaseExporter {
                         Map.of("ids", toDelete)
                 );
 
-                // Delete old versions
+                // Delete old versions that have no external dependencies
                 Result deleteResult = session.run(
-                        "MATCH (m:MavenModule {groupId: $groupId, artifactId: $artifactId}) " +
-                        "WHERE m.isLatest = false " +
+                        "MATCH (m:MavenModule) " +
+                        "WHERE id(m) IN $ids " +
                         "DETACH DELETE m " +
                         "RETURN count(m) AS deleted",
-                        Map.of("groupId", groupId, "artifactId", artifactId)
+                        Map.of("ids", toDelete)
                 );
 
                 int deleted = deleteResult.single().get("deleted").asInt();
@@ -248,6 +262,44 @@ public class Neo4jExporter implements DatabaseExporter {
                 return deleted;
             }
         }, "Cleanup old versions");
+    }
+
+    /**
+     * Checks if a module version has incoming DEPENDS_ON relationships from modules
+     * that are NOT part of the current export session.
+     *
+     * @param session         Neo4j session
+     * @param groupId         module group ID
+     * @param artifactId      module artifact ID
+     * @param version         module version
+     * @param exportedModules set of GAVs exported in current session
+     * @return true if there are external dependencies pointing to this module
+     */
+    private boolean hasExternalDependencies(Session session, String groupId, String artifactId,
+                                             String version, Set<String> exportedModules) {
+        // Find all modules that depend on this version
+        Result result = session.run(
+                "MATCH (source:MavenModule)-[:DEPENDS_ON]->(target:MavenModule " +
+                "{groupId: $groupId, artifactId: $artifactId, version: $version}) " +
+                "RETURN source.groupId AS srcGroupId, source.artifactId AS srcArtifactId, " +
+                "       source.version AS srcVersion",
+                Map.of("groupId", groupId, "artifactId", artifactId, "version", version)
+        );
+
+        while (result.hasNext()) {
+            Record record = result.next();
+            String sourceGAV = record.get("srcGroupId").asString() + ":" +
+                              record.get("srcArtifactId").asString() + ":" +
+                              record.get("srcVersion").asString();
+
+            // If the source is NOT in the exported modules, it's an external dependency
+            if (!exportedModules.contains(sourceGAV)) {
+                log.debug("Found external dependency: {} -> {}:{}:{}",
+                         sourceGAV, groupId, artifactId, version);
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

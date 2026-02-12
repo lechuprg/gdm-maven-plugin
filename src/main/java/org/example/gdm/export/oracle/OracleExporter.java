@@ -178,7 +178,7 @@ public class OracleExporter implements DatabaseExporter {
     }
 
     @Override
-    public int cleanupOldVersions(String groupId, String artifactId) throws ExportException {
+    public int cleanupOldVersions(String groupId, String artifactId, Set<String> exportedModules) throws ExportException {
         return retryExecutor.execute(() -> {
             try (Connection conn = dataSource.getConnection()) {
                 conn.setAutoCommit(false);
@@ -216,11 +216,25 @@ public class OracleExporter implements DatabaseExporter {
                         return v1.compareTo(v2);
                     });
 
-                    // Keep the first (latest), delete the rest
-                    List<Long> toDelete = versions.subList(1, versions.size())
-                            .stream()
-                            .map(v -> v.id)
-                            .toList();
+                    // Keep the first (latest), check the rest for external dependencies
+                    List<Long> toDelete = new ArrayList<>();
+                    for (int i = 1; i < versions.size(); i++) {
+                        VersionInfo oldVersion = versions.get(i);
+                        String oldGAV = groupId + ":" + artifactId + ":" + oldVersion.version;
+
+                        // Check if this old version has incoming dependencies from modules outside current export
+                        if (!hasExternalDependencies(conn, oldVersion.id, exportedModules)) {
+                            toDelete.add(oldVersion.id);
+                            log.debug("Old version {} has no external dependencies, will be deleted", oldGAV);
+                        } else {
+                            log.info("Keeping old version {} - has dependencies from other projects", oldGAV);
+                        }
+                    }
+
+                    if (toDelete.isEmpty()) {
+                        log.debug("No old versions eligible for deletion for {}:{}", groupId, artifactId);
+                        return 0;
+                    }
 
                     // Mark as not latest
                     String updateSql = "UPDATE maven_modules SET is_latest = 0 WHERE id = ?";
@@ -233,13 +247,17 @@ public class OracleExporter implements DatabaseExporter {
                     }
 
                     // Delete old versions (CASCADE will delete dependencies)
-                    String deleteSql = "DELETE FROM maven_modules WHERE is_latest = 0 " +
-                            "AND group_id = ? AND artifact_id = ?";
-                    int deleted;
+                    int deleted = 0;
+                    String deleteSql = "DELETE FROM maven_modules WHERE id = ?";
                     try (PreparedStatement ps = conn.prepareStatement(deleteSql)) {
-                        ps.setString(1, groupId);
-                        ps.setString(2, artifactId);
-                        deleted = ps.executeUpdate();
+                        for (Long id : toDelete) {
+                            ps.setLong(1, id);
+                            ps.addBatch();
+                        }
+                        int[] results = ps.executeBatch();
+                        for (int r : results) {
+                            if (r > 0) deleted++;
+                        }
                     }
 
                     conn.commit();
@@ -252,6 +270,41 @@ public class OracleExporter implements DatabaseExporter {
                 }
             }
         }, "Cleanup old versions");
+    }
+
+    /**
+     * Checks if a module has incoming dependencies from modules
+     * that are NOT part of the current export session.
+     *
+     * @param conn            database connection
+     * @param moduleId        module ID to check
+     * @param exportedModules set of GAVs exported in current session
+     * @return true if there are external dependencies pointing to this module
+     */
+    private boolean hasExternalDependencies(Connection conn, long moduleId, Set<String> exportedModules) throws SQLException {
+        // Find all modules that depend on this version
+        String sql = "SELECT m.group_id, m.artifact_id, m.version " +
+                     "FROM maven_dependencies d " +
+                     "JOIN maven_modules m ON d.source_module_id = m.id " +
+                     "WHERE d.target_module_id = ?";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, moduleId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String sourceGAV = rs.getString("group_id") + ":" +
+                                      rs.getString("artifact_id") + ":" +
+                                      rs.getString("version");
+
+                    // If the source is NOT in the exported modules, it's an external dependency
+                    if (!exportedModules.contains(sourceGAV)) {
+                        log.debug("Found external dependency from {} to module id {}", sourceGAV, moduleId);
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     @Override

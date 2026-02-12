@@ -26,6 +26,8 @@ public class VersionCleanupService {
 
     /**
      * Cleans up old versions for all modules in the graph.
+     * Old versions are only deleted if they have no incoming dependencies
+     * from modules outside the current export session.
      *
      * @param graph the dependency graph
      * @return total number of versions deleted
@@ -34,6 +36,12 @@ public class VersionCleanupService {
     public int cleanupOldVersions(DependencyGraph graph) throws ExportException {
         Set<String> processedGAs = new HashSet<>();
         int totalDeleted = 0;
+
+        // Build set of all exported module GAVs
+        Set<String> exportedModuleGAVs = new HashSet<>();
+        for (MavenModule module : graph.getModules()) {
+            exportedModuleGAVs.add(module.getGAV());
+        }
 
         for (MavenModule module : graph.getModules()) {
             String ga = module.getGA();
@@ -45,7 +53,7 @@ public class VersionCleanupService {
             processedGAs.add(ga);
 
             try {
-                int deleted = exporter.cleanupOldVersions(module.getGroupId(), module.getArtifactId());
+                int deleted = exporter.cleanupOldVersions(module.getGroupId(), module.getArtifactId(), exportedModuleGAVs);
                 totalDeleted += deleted;
             } catch (ExportException e) {
                 log.warn("Failed to cleanup old versions for {}: {}", ga, e.getMessage());

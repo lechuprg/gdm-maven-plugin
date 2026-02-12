@@ -4,6 +4,8 @@ import org.example.gdm.exception.ExportException;
 import org.example.gdm.model.DependencyGraph;
 import org.example.gdm.model.ProjectStructure;
 
+import java.util.Set;
+
 /**
  * Interface for database exporters.
  * Implementations export dependency graphs to specific database types.
@@ -56,8 +58,25 @@ public interface DatabaseExporter extends AutoCloseable {
      * @param artifactId the artifact ID
      * @return the number of versions deleted
      * @throws ExportException if cleanup fails
+     * @deprecated Use {@link #cleanupOldVersions(String, String, Set)} instead
      */
-    int cleanupOldVersions(String groupId, String artifactId) throws ExportException;
+    @Deprecated
+    default int cleanupOldVersions(String groupId, String artifactId) throws ExportException {
+        return cleanupOldVersions(groupId, artifactId, Set.of());
+    }
+
+    /**
+     * Cleans up old versions of a module, keeping only the latest.
+     * Old versions are only deleted if they have no incoming dependencies
+     * from modules outside the current export session.
+     *
+     * @param groupId         the group ID
+     * @param artifactId      the artifact ID
+     * @param exportedModules set of GAV strings (groupId:artifactId:version) exported in current session
+     * @return the number of versions deleted
+     * @throws ExportException if cleanup fails
+     */
+    int cleanupOldVersions(String groupId, String artifactId, Set<String> exportedModules) throws ExportException;
 
     /**
      * Checks if the exporter is connected to the database.
