@@ -46,8 +46,10 @@ try (Transaction tx = session.beginTransaction()) {
 MyProject (1.0.0)
     ↓ [exported as]
 ProjectModule {isRootProject: true}
-    ↓ [linked to]
-MavenModule (via IS_A relationship)
+    ↓ [DEPENDS_ON] → MavenModule (external dependencies)
+
+Note: ProjectModule does NOT have a MavenModule counterpart.
+ProjectModule directly participates in DEPENDS_ON relationships.
 ```
 
 ### Multi-Module Project
@@ -59,8 +61,11 @@ Parent (1.0.0)
 ProjectModule {parent, isRootProject: true}
 ├── [CONTAINS_MODULE] → ProjectModule {sub-a}
 └── [CONTAINS_MODULE] → ProjectModule {sub-b}
-    ↓ [each linked to]
-MavenModule (via IS_A relationship)
+│
+└── [DEPENDS_ON] → MavenModule (external dependencies)
+
+Note: Inter-module dependencies use ProjectModule → ProjectModule relationships.
+External dependencies use ProjectModule → MavenModule relationships.
 ```
 
 ## Key Features
@@ -69,12 +74,12 @@ MavenModule (via IS_A relationship)
 |---------|--------|-------|
 | ProjectModule nodes | ✅ | For root and sub-modules |
 | CONTAINS_MODULE edges | ✅ | Parent→Child relationships |
-| IS_A relationships | ✅ | Links to MavenModule when exists |
+| DEPENDS_ON from ProjectModule | ✅ | Direct dependency relationships |
 | Single-module projects | ✅ | Automatic detection |
 | Multi-module projects | ✅ | Full hierarchy support |
 | Nested modules | ✅ | Arbitrary depth |
 | Idempotent exports | ✅ | Safe to re-run |
-| Backward compatible | ✅ | No existing data modified |
+| No duplicate nodes | ✅ | ProjectModule ≠ MavenModule |
 | Transaction safe | ✅ | Fixed with this change |
 
 ## Testing the Fix
@@ -116,10 +121,15 @@ RETURN COUNT(r) AS containsCount,
        c.artifactId AS child;
 ```
 
-### Check IS_A relationships
+### Check DEPENDS_ON relationships from ProjectModule
 ```cypher
-MATCH (p:ProjectModule)-[r:IS_A]->(m:MavenModule)
-RETURN COUNT(r) AS isACount;
+// Dependencies from project modules to external modules
+MATCH (p:ProjectModule)-[r:DEPENDS_ON]->(m:MavenModule)
+RETURN COUNT(r) AS externalDependencyCount;
+
+// Dependencies between project modules
+MATCH (p1:ProjectModule)-[r:DEPENDS_ON]->(p2:ProjectModule)
+RETURN COUNT(r) AS interModuleDependencyCount;
 ```
 
 ### View complete project hierarchy
@@ -136,10 +146,10 @@ RETURN DISTINCT module.artifactId, module.version, module.isRootProject;
 - Query: `SHOW CONSTRAINTS`
 - If exists, that's fine - it will be reused
 
-**If IS_A relationships aren't created:**
-- Verify MavenModule nodes exist with same groupId:artifactId:version
-- MavenModule should be created during dependency graph export
-- Is_A is only created if both modules exist
+**If DEPENDS_ON relationships are missing:**
+- Ensure ProjectModule nodes were created before exporting dependencies
+- The export order is: 1) ProjectStructure, 2) DependencyGraph
+- Check that source/target nodes exist with correct labels
 
 **If CONTAINS_MODULE relationships are missing:**
 - Check that parent and child ProjectModule nodes were created

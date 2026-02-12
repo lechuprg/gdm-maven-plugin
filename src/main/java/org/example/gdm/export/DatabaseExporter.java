@@ -35,12 +35,27 @@ public interface DatabaseExporter extends AutoCloseable {
      * @return the export result with statistics
      * @throws ExportException if export fails
      */
-    ExportResult exportGraph(DependencyGraph graph) throws ExportException;
+    default ExportResult exportGraph(DependencyGraph graph) throws ExportException {
+        return exportGraph(graph, Set.of());
+    }
+
+    /**
+     * Exports the dependency graph to the database.
+     * For modules that are part of the project structure (identified by projectModuleGAVs),
+     * dependencies will originate from ProjectModule nodes instead of MavenModule nodes.
+     *
+     * @param graph             the dependency graph to export
+     * @param projectModuleGAVs set of GAV strings for modules that are project modules
+     * @return the export result with statistics
+     * @throws ExportException if export fails
+     */
+    ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs) throws ExportException;
 
     /**
      * Exports the project module structure to the database.
-     * This creates ProjectModule nodes and CONTAINS_MODULE relationships,
-     * as well as IS_A relationships linking ProjectModules to MavenModules.
+     * This creates ProjectModule nodes and CONTAINS_MODULE relationships.
+     * ProjectModule nodes are distinct from MavenModule nodes - project modules
+     * are NOT duplicated as MavenModule nodes.
      *
      * @param projectStructure the project structure to export
      * @return the number of project modules exported

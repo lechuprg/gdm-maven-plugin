@@ -84,7 +84,7 @@ public class Neo4jExporter implements DatabaseExporter {
     }
 
     @Override
-    public ExportResult exportGraph(DependencyGraph graph) throws ExportException {
+    public ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs) throws ExportException {
         long startTime = System.currentTimeMillis();
 
         try (Session session = driver.session()) {
@@ -94,15 +94,19 @@ public class Neo4jExporter implements DatabaseExporter {
 
             // Start a transaction for the entire export
             try (Transaction tx = session.beginTransaction()) {
-                // 1. Upsert all modules
+                // 1. Upsert all modules (skip project modules - they are already ProjectModule nodes)
                 for (MavenModule module : graph.getModules()) {
-                    upsertModule(tx, module);
-                    modulesExported++;
+                    if (!projectModuleGAVs.contains(module.getGAV())) {
+                        upsertModule(tx, module);
+                        modulesExported++;
+                    } else {
+                        log.debug("Skipping MavenModule creation for project module: {}", module.getGAV());
+                    }
                 }
 
                 // 2. Delete old dependencies from root module
                 MavenModule root = graph.getRootModule();
-                deleteOldDependencies(tx, root);
+                deleteOldDependencies(tx, root, projectModuleGAVs);
 
                 // 3. Create new dependencies in batches
                 List<Dependency> dependencies = graph.getDependencies();
@@ -111,7 +115,7 @@ public class Neo4jExporter implements DatabaseExporter {
                     List<Dependency> batch = dependencies.subList(i, end);
 
                     for (Dependency dep : batch) {
-                        createDependency(tx, dep);
+                        createDependency(tx, dep, projectModuleGAVs);
                         dependenciesExported++;
                         if (!dep.isResolved()) {
                             conflictsDetected++;
@@ -170,10 +174,8 @@ public class Neo4jExporter implements DatabaseExporter {
                     createContainsModuleRelationship(tx, rel.parent(), rel.child());
                 }
 
-                // 4. Create IS_A relationships linking ProjectModules to MavenModules
-                for (ProjectModule module : projectStructure.getAllModules()) {
-                    createIsARelationship(tx, module);
-                }
+                // Note: ProjectModule nodes are NOT linked to MavenModule nodes via IS_A.
+                // ProjectModules directly participate in DEPENDS_ON relationships.
 
                 tx.commit();
                 log.info("Project structure export committed: {} modules", modulesExported);
@@ -342,22 +344,47 @@ public class Neo4jExporter implements DatabaseExporter {
         );
     }
 
-    private void deleteOldDependencies(Transaction tx, MavenModule source) {
-        tx.run(
-                "MATCH (m:MavenModule {groupId: $groupId, artifactId: $artifactId, version: $version})" +
-                "-[r:DEPENDS_ON]->() DELETE r",
-                Map.of(
-                        "groupId", source.getGroupId(),
-                        "artifactId", source.getArtifactId(),
-                        "version", source.getVersion()
-                )
-        );
+    private void deleteOldDependencies(Transaction tx, MavenModule source, Set<String> projectModuleGAVs) {
+        String sourceGAV = source.getGAV();
+        boolean isProjectModule = projectModuleGAVs.contains(sourceGAV);
+
+        if (isProjectModule) {
+            // Delete dependencies from ProjectModule node
+            tx.run(
+                    "MATCH (m:ProjectModule {groupId: $groupId, artifactId: $artifactId, version: $version})" +
+                    "-[r:DEPENDS_ON]->() DELETE r",
+                    Map.of(
+                            "groupId", source.getGroupId(),
+                            "artifactId", source.getArtifactId(),
+                            "version", source.getVersion()
+                    )
+            );
+        } else {
+            // Delete dependencies from MavenModule node
+            tx.run(
+                    "MATCH (m:MavenModule {groupId: $groupId, artifactId: $artifactId, version: $version})" +
+                    "-[r:DEPENDS_ON]->() DELETE r",
+                    Map.of(
+                            "groupId", source.getGroupId(),
+                            "artifactId", source.getArtifactId(),
+                            "version", source.getVersion()
+                    )
+            );
+        }
     }
 
-    private void createDependency(Transaction tx, Dependency dep) {
+    private void createDependency(Transaction tx, Dependency dep, Set<String> projectModuleGAVs) {
+        String sourceGAV = dep.getSource().getGAV();
+        String targetGAV = dep.getTarget().getGAV();
+        boolean sourceIsProject = projectModuleGAVs.contains(sourceGAV);
+        boolean targetIsProject = projectModuleGAVs.contains(targetGAV);
+
+        String sourceLabel = sourceIsProject ? "ProjectModule" : "MavenModule";
+        String targetLabel = targetIsProject ? "ProjectModule" : "MavenModule";
+
         tx.run(
-                "MATCH (source:MavenModule {groupId: $sourceGroupId, artifactId: $sourceArtifactId, version: $sourceVersion}), " +
-                "      (target:MavenModule {groupId: $targetGroupId, artifactId: $targetArtifactId, version: $targetVersion}) " +
+                "MATCH (source:" + sourceLabel + " {groupId: $sourceGroupId, artifactId: $sourceArtifactId, version: $sourceVersion}), " +
+                "      (target:" + targetLabel + " {groupId: $targetGroupId, artifactId: $targetArtifactId, version: $targetVersion}) " +
                 "CREATE (source)-[:DEPENDS_ON {" +
                 "    scope: $scope, " +
                 "    optional: $optional, " +
@@ -434,23 +461,6 @@ public class Neo4jExporter implements DatabaseExporter {
         log.debug("Created CONTAINS_MODULE: {} -> {}", parent.getArtifactId(), child.getArtifactId());
     }
 
-    /**
-     * Creates an IS_A relationship linking a ProjectModule to its corresponding MavenModule.
-     * Only creates the relationship if the MavenModule exists.
-     */
-    private void createIsARelationship(Transaction tx, ProjectModule module) {
-        tx.run(
-                "MATCH (p:ProjectModule {groupId: $groupId, artifactId: $artifactId, version: $version}), " +
-                "      (m:MavenModule {groupId: $groupId, artifactId: $artifactId, version: $version}) " +
-                "MERGE (p)-[:IS_A]->(m)",
-                Map.of(
-                        "groupId", module.getGroupId(),
-                        "artifactId", module.getArtifactId(),
-                        "version", module.getVersion()
-                )
-        );
-        log.debug("Created IS_A relationship for: {}:{}", module.getArtifactId(), module.getVersion());
-    }
 
     private record VersionInfo(String version, long nodeId) {}
 }

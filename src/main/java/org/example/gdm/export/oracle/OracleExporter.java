@@ -94,7 +94,10 @@ public class OracleExporter implements DatabaseExporter {
     }
 
     @Override
-    public ExportResult exportGraph(DependencyGraph graph) throws ExportException {
+    public ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs) throws ExportException {
+        // Note: Oracle exporter currently doesn't distinguish between ProjectModule and MavenModule
+        // All modules are stored in maven_modules table. This can be enhanced in the future
+        // to support the ProjectModule distinction.
         long startTime = System.currentTimeMillis();
 
         try (Connection conn = dataSource.getConnection()) {

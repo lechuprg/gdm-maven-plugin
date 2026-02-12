@@ -195,8 +195,8 @@ class Neo4jProjectModuleExportIT {
     }
 
     @Test
-    @DisplayName("should create IS_A relationship when MavenModule exists")
-    void shouldCreateIsARelationshipWhenMavenModuleExists() throws Exception {
+    @DisplayName("should NOT create IS_A relationship - ProjectModule and MavenModule are independent")
+    void shouldNotCreateIsARelationshipMavenModuleExists() throws Exception {
         // Given: Create a MavenModule first
         try (Session session = driver.session()) {
             session.run(
@@ -209,24 +209,31 @@ class Neo4jProjectModuleExportIT {
         // When
         exporter.exportProjectStructure(structure);
 
-        // Then
+        // Then: IS_A relationships should NOT be created anymore
+        // ProjectModule nodes are separate from MavenModule nodes
         try (Session session = driver.session()) {
             long isACount = session.run(
                     "MATCH (p:ProjectModule)-[r:IS_A]->(m:MavenModule) RETURN count(r) AS count")
                     .single().get("count").asLong();
-            assertThat(isACount).isEqualTo(1);
+            assertThat(isACount).isEqualTo(0);
 
-            // Verify the link is correct
-            var result = session.run(
-                    "MATCH (p:ProjectModule {artifactId: 'my-app'})-[:IS_A]->(m:MavenModule) " +
-                    "RETURN m.artifactId AS mavenArtifact");
-            assertThat(result.single().get("mavenArtifact").asString()).isEqualTo("my-app");
+            // ProjectModule should exist independently
+            long projectModuleCount = session.run(
+                    "MATCH (p:ProjectModule {artifactId: 'my-app'}) RETURN count(p) AS count")
+                    .single().get("count").asLong();
+            assertThat(projectModuleCount).isEqualTo(1);
+
+            // MavenModule should also exist (we created it above)
+            long mavenModuleCount = session.run(
+                    "MATCH (m:MavenModule {artifactId: 'my-app'}) RETURN count(m) AS count")
+                    .single().get("count").asLong();
+            assertThat(mavenModuleCount).isEqualTo(1);
         }
     }
 
     @Test
-    @DisplayName("should not create IS_A relationship when MavenModule does not exist")
-    void shouldNotCreateIsARelationshipWhenMavenModuleDoesNotExist() throws Exception {
+    @DisplayName("should not create IS_A relationship - ProjectModule is independent of MavenModule")
+    void shouldNotCreateIsARelationshipProjectModuleIsIndependent() throws Exception {
         // Given: No MavenModule exists
         ProjectStructure structure = ProjectStructure.singleModule(
                 "com.example", "no-maven", "1.0.0");
@@ -234,14 +241,14 @@ class Neo4jProjectModuleExportIT {
         // When
         exporter.exportProjectStructure(structure);
 
-        // Then
+        // Then: No IS_A relationships should exist (this is the expected new behavior)
         try (Session session = driver.session()) {
             long isACount = session.run(
                     "MATCH (p:ProjectModule)-[r:IS_A]->(m:MavenModule) RETURN count(r) AS count")
                     .single().get("count").asLong();
             assertThat(isACount).isEqualTo(0);
 
-            // But ProjectModule should still exist
+            // ProjectModule should still exist
             long moduleCount = session.run(
                     "MATCH (n:ProjectModule {artifactId: 'no-maven'}) RETURN count(n) AS count")
                     .single().get("count").asLong();

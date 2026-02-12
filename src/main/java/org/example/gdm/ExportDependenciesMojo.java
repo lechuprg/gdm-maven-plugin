@@ -28,6 +28,7 @@ import org.example.gdm.resolver.ProjectStructureResolver;
 import org.example.gdm.version.VersionCleanupService;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * Exports Maven project dependency graph to a database (Neo4j or Oracle).
@@ -272,11 +273,9 @@ public class ExportDependenciesMojo extends AbstractMojo {
                              ", found " + schemaVersion.getVersion());
             }
 
-            // 6. Export graph
-            getLog().info("Exporting dependency graph...");
-            ExportResult result = exporter.exportGraph(filteredGraph);
-
-            // 6.5 Export project structure (ProjectModule nodes and relationships)
+            // 6. Resolve and export project structure FIRST (ProjectModule nodes)
+            // This must happen before exportGraph so that ProjectModule nodes exist
+            // for DEPENDS_ON relationships to reference
             getLog().info("Resolving project structure...");
             ProjectStructureResolver structureResolver = new ProjectStructureResolver(project, session);
             ProjectStructure projectStructure = structureResolver.resolve();
@@ -284,7 +283,16 @@ public class ExportDependenciesMojo extends AbstractMojo {
             int projectModulesExported = exporter.exportProjectStructure(projectStructure);
             getLog().info("Project modules exported: " + projectModulesExported);
 
-            // 7. Cleanup old versions if configured
+            // 7. Collect project module GAVs (these will NOT get MavenModule nodes)
+            Set<String> projectModuleGAVs = projectStructure.getAllModules().stream()
+                    .map(m -> m.getGroupId() + ":" + m.getArtifactId() + ":" + m.getVersion())
+                    .collect(java.util.stream.Collectors.toSet());
+
+            // 8. Export dependency graph (uses ProjectModule nodes for project modules)
+            getLog().info("Exporting dependency graph...");
+            ExportResult result = exporter.exportGraph(filteredGraph, projectModuleGAVs);
+
+            // 9. Cleanup old versions if configured
             int deletedVersions = 0;
             if (config.isKeepOnlyLatestVersion()) {
                 getLog().info("Cleaning up old versions...");
@@ -292,7 +300,7 @@ public class ExportDependenciesMojo extends AbstractMojo {
                 deletedVersions = cleanupService.cleanupOldVersions(filteredGraph);
             }
 
-            // 8. Log results
+            // 10. Log results
             logExportResult(result, projectModulesExported, deletedVersions);
 
         } finally {
