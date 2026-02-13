@@ -12,7 +12,7 @@
 
 ```xml
 <plugin>
-    <groupId>org.example.gdm</groupId>
+    <groupId>org.pw.gdm</groupId>
     <artifactId>gdm-maven-plugin</artifactId>
     <version>1.0.0</version>
     <configuration>
@@ -28,7 +28,7 @@
 
 ```xml
 <plugin>
-    <groupId>org.example.gdm</groupId>
+    <groupId>org.pw.gdm</groupId>
     <artifactId>gdm-maven-plugin</artifactId>
     <version>1.0.0</version>
     <configuration>
@@ -1199,7 +1199,7 @@ mvn gdm:export
 **Option 2: Bound to phase (future enhancement)**
 ```xml
 <plugin>
-    <groupId>org.example.gdm</groupId>
+    <groupId>org.pw.gdm</groupId>
     <artifactId>gdm-maven-plugin</artifactId>
     <version>1.0.0</version>
     <executions>

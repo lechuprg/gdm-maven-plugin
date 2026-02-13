@@ -19,7 +19,7 @@ This Maven plugin exports project dependency graphs to a database (Neo4j or Orac
 
     ```xml
     <plugin>
-        <groupId>org.example.gdm</groupId>
+        <groupId>org.pw.gdm</groupId>
         <artifactId>gdm-maven-plugin</artifactId>
         <version>1.0.0-SNAPSHOT</version>
         <configuration>
