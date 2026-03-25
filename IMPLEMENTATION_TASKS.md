@@ -44,7 +44,7 @@ Set up the Maven plugin project structure with proper dependencies and build con
 - [ ] Add dependencies: Maven Plugin API, Maven Plugin Annotations, Maven Resolver (Aether)
 - [ ] Add dependencies: Neo4j Java Driver, Oracle JDBC (ojdbc), HikariCP
 - [ ] Configure `maven-plugin-plugin` for goal generation
-- [ ] Create base package structure: `org.example.gdm`
+- [ ] Create base package structure: `io.github.lechuprg`
 - [ ] Verify project builds with `mvn clean install`
 
 **Files to create:**

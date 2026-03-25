@@ -7,7 +7,7 @@ This document describes the steps required to publish the GDM Maven Plugin to Ma
 ### 1. Create a Sonatype Account
 
 1. Register at [Sonatype JIRA](https://issues.sonatype.org/secure/Signup!default.jspa)
-2. Create a New Project ticket requesting access to your groupId (`org.example.gdm`)
+2. Create a New Project ticket requesting access to your groupId (`io.github.lechuprg`)
 3. Wait for approval (usually 1-2 business days)
 
 **Note:** If you're using a domain you own (e.g., `com.yourcompany`), you'll need to verify domain ownership. If using GitHub-based coordinates (e.g., `io.github.yourusername`), Sonatype will verify your GitHub account.

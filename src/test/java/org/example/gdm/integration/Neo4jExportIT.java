@@ -1,8 +1,8 @@
-package org.example.gdm.integration;
+package io.github.lechuprg.integration;
 
-import org.example.gdm.model.Dependency;
-import org.example.gdm.model.DependencyGraph;
-import org.example.gdm.model.MavenModule;
+import io.github.lechuprg.model.Dependency;
+import io.github.lechuprg.model.DependencyGraph;
+import io.github.lechuprg.model.MavenModule;
 import org.junit.Ignore;
 import org.junit.jupiter.api.*;
 import org.neo4j.driver.AuthTokens;
@@ -12,7 +12,7 @@ import org.neo4j.driver.Session;
 import org.testcontainers.containers.Neo4jContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.example.gdm.export.neo4j.Neo4jExporter;
+import io.github.lechuprg.export.neo4j.Neo4jExporter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

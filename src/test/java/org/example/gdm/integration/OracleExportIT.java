@@ -1,9 +1,9 @@
-package org.example.gdm.integration;
+package io.github.lechuprg.integration;
 
-import org.example.gdm.export.oracle.OracleExporter;
-import org.example.gdm.model.Dependency;
-import org.example.gdm.model.DependencyGraph;
-import org.example.gdm.model.MavenModule;
+import io.github.lechuprg.export.oracle.OracleExporter;
+import io.github.lechuprg.model.Dependency;
+import io.github.lechuprg.model.DependencyGraph;
+import io.github.lechuprg.model.MavenModule;
 import org.junit.jupiter.api.*;
 import org.testcontainers.containers.OracleContainer;
 import org.testcontainers.junit.jupiter.Container;
