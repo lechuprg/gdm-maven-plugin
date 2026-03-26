@@ -2,6 +2,8 @@ package io.github.lechuprg.model;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Represents a complete dependency graph.
@@ -9,9 +11,19 @@ import java.util.stream.Collectors;
  */
 public class DependencyGraph {
 
+    private static final Logger log = LoggerFactory.getLogger(DependencyGraph.class);
+
     private final MavenModule rootModule;
     private final Set<MavenModule> modules;
     private final List<Dependency> dependencies;
+
+    /**
+     * Key for deduplicating dependencies: (sourceGAV, targetGAV, scope).
+     * depth is intentionally excluded — the same logical dependency can be
+     * discovered at different depths via different paths, but we only want
+     * one DEPENDS_ON relationship per (A, B, scope) triple in the graph.
+     */
+    private final Map<String, Dependency> dependencyIndex;
 
     /**
      * Creates a new DependencyGraph with the specified root module.
@@ -20,6 +32,7 @@ public class DependencyGraph {
         this.rootModule = Objects.requireNonNull(rootModule, "rootModule cannot be null");
         this.modules = new LinkedHashSet<>();
         this.dependencies = new ArrayList<>();
+        this.dependencyIndex = new LinkedHashMap<>();
         this.modules.add(rootModule);
     }
 
@@ -54,13 +67,55 @@ public class DependencyGraph {
     }
 
     /**
-     * Adds a dependency to the graph.
-     * Also ensures both source and target modules are in the graph.
+     * Adds a dependency to the graph with deduplication.
+     *
+     * <p>For the same (source, target, scope) triple — which can be discovered
+     * at multiple depths when walking the transitive tree — only ONE entry is
+     * kept.  When a duplicate arrives the existing entry is updated to:</p>
+     * <ul>
+     *   <li>the <b>minimum depth</b> (a direct path beats a transitive one)</li>
+     *   <li><code>isResolved = true</code> if <em>either</em> path is resolved</li>
+     * </ul>
+     *
+     * <p>This ensures that the Neo4j exporter never creates more than one
+     * <code>DEPENDS_ON</code> relationship between two nodes for the same scope.</p>
      */
     public void addDependency(Dependency dependency) {
         modules.add(dependency.getSource());
         modules.add(dependency.getTarget());
-        dependencies.add(dependency);
+
+        String key = dependency.getSource().getGAV()
+                + "->" + dependency.getTarget().getGAV()
+                + "@" + dependency.getScope();
+
+        Dependency existing = dependencyIndex.get(key);
+        if (existing == null) {
+            // First time we see this (source, target, scope) — just add it
+            dependencyIndex.put(key, dependency);
+            dependencies.add(dependency);
+        } else {
+            // Duplicate path: keep minimum depth and preserve resolved status
+            if (dependency.getDepth() < existing.getDepth()
+                    || (!existing.isResolved() && dependency.isResolved())) {
+
+                // Replace the existing entry with the better one
+                int idx = dependencies.indexOf(existing);
+                Dependency merged = Dependency.builder()
+                        .source(existing.getSource())
+                        .target(existing.getTarget())
+                        .scope(existing.getScope())
+                        .optional(existing.isOptional() && dependency.isOptional())
+                        .depth(Math.min(existing.getDepth(), dependency.getDepth()))
+                        .isResolved(existing.isResolved() || dependency.isResolved())
+                        .build();
+                dependencies.set(idx, merged);
+                dependencyIndex.put(key, merged);
+
+                log.debug("Merged duplicate dependency {} at depth {} (was {})",
+                        key, merged.getDepth(), existing.getDepth());
+            }
+            // else: existing is already better — discard the new one
+        }
     }
 
     // Query methods

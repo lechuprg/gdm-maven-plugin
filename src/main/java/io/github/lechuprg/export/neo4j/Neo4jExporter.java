@@ -382,16 +382,26 @@ public class Neo4jExporter implements DatabaseExporter {
         String sourceLabel = sourceIsProject ? nodeLabel : "MavenModule";
         String targetLabel = targetIsProject ? nodeLabel : "MavenModule";
 
+        // MERGE on (source, scope, target) so only ONE relationship exists per
+        // (A, B, scope) triple — regardless of how many times the same pair is
+        // discovered at different depths during the transitive walk.
+        // ON CREATE  → first time: store all properties as-is.
+        // ON MATCH   → already exists: keep the minimum depth (shorter path wins)
+        //              and preserve isResolved=true if either path resolves it.
         tx.run(
                 "MATCH (source:" + sourceLabel + " {groupId: $sourceGroupId, artifactId: $sourceArtifactId, version: $sourceVersion}), " +
                 "      (target:" + targetLabel + " {groupId: $targetGroupId, artifactId: $targetArtifactId, version: $targetVersion}) " +
-                "CREATE (source)-[:DEPENDS_ON {" +
-                "    scope: $scope, " +
-                "    optional: $optional, " +
-                "    depth: $depth, " +
-                "    isResolved: $isResolved, " +
-                "    exportTimestamp: datetime()" +
-                "}]->(target)",
+                "MERGE (source)-[r:DEPENDS_ON {scope: $scope}]->(target) " +
+                "ON CREATE SET " +
+                "    r.optional    = $optional, " +
+                "    r.depth       = $depth, " +
+                "    r.isResolved  = $isResolved, " +
+                "    r.exportTimestamp = datetime() " +
+                "ON MATCH SET " +
+                "    r.depth       = CASE WHEN $depth < r.depth THEN $depth ELSE r.depth END, " +
+                "    r.isResolved  = r.isResolved OR $isResolved, " +
+                "    r.optional    = r.optional AND $optional, " +
+                "    r.exportTimestamp = datetime()",
                 Map.ofEntries(
                         Map.entry("sourceGroupId", dep.getSource().getGroupId()),
                         Map.entry("sourceArtifactId", dep.getSource().getArtifactId()),
