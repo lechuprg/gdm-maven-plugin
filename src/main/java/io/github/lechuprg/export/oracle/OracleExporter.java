@@ -7,6 +7,7 @@ import io.github.lechuprg.export.*;
 import io.github.lechuprg.model.Dependency;
 import io.github.lechuprg.model.DependencyGraph;
 import io.github.lechuprg.model.MavenModule;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -94,10 +95,10 @@ public class OracleExporter implements DatabaseExporter {
     }
 
     @Override
-    public ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs, String nodeLabel) throws ExportException {
-        // Note: Oracle exporter currently doesn't use nodeLabel as it stores all modules in maven_modules table.
-        // The nodeLabel parameter is accepted for interface compatibility but is not used in the Oracle schema.
-        // This can be enhanced in the future to support storing the label as a column if needed.
+    public ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs, String nodeLabel,
+                                    List<String> projectGroupIds) throws ExportException {
+        // Note: Oracle exporter currently doesn't use nodeLabel or projectGroupIds as it stores all
+        // modules in the maven_modules table. These parameters are accepted for interface compatibility.
         long startTime = System.currentTimeMillis();
 
         try (Connection conn = dataSource.getConnection()) {

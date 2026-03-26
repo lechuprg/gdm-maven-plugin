@@ -132,6 +132,20 @@ MATCH (p1:ProjectModule)-[r:DEPENDS_ON]->(p2:ProjectModule)
 RETURN COUNT(r) AS interModuleDependencyCount;
 ```
 
+### Check cross-project version divergences (SAME_ARTIFACT)
+```cypher
+// Count all version-sibling pairs in the graph
+MATCH ()-[r:SAME_ARTIFACT]-()
+RETURN COUNT(r) AS sameArtifactBridges;
+
+// Show every artifact family where different projects use different versions
+MATCH (a)-[s:SAME_ARTIFACT]-(b)
+RETURN a.groupId AS groupId, a.artifactId AS artifactId,
+       a.version  AS versionA, labels(a) AS labelsA,
+       b.version  AS versionB, labels(b) AS labelsB
+ORDER BY groupId, artifactId;
+```
+
 ### View complete project hierarchy
 ```cypher
 MATCH (root:ProjectModule {isRootProject: true})

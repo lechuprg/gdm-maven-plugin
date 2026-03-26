@@ -138,6 +138,18 @@ FOR ()-[r:DEPENDS_ON]-() ON (r.depth);
 CREATE INDEX dep_resolved IF NOT EXISTS
 FOR ()-[r:DEPENDS_ON]-() ON (r.isResolved);
 
+-- SAME_ARTIFACT relationship:
+-- Connects every pair of nodes (any label) that share the same groupId:artifactId
+-- but have DIFFERENT versions.  Created automatically by the plugin after each export.
+-- This makes cross-project version divergences visible directly in the graph browser.
+-- Properties:
+-- - versionDiffers: Boolean (always true — allows easy exclusion when not needed)
+-- - versions: String[] (two-element array with both versions for quick inspection)
+--
+-- Index for efficient SAME_ARTIFACT linking queries:
+CREATE INDEX same_artifact_ga IF NOT EXISTS
+FOR (m:MavenModule) ON (m.groupId, m.artifactId);
+
 -- Sample queries:
 
 -- 1. Find all dependencies of a module
@@ -152,9 +164,17 @@ WHERE target.groupId = 'org.springframework'
   AND source.isLatest = true
 RETURN source, r, target;
 
--- 3. Find version conflicts
+-- 3. Find version conflicts (within a single project's resolved graph)
 MATCH (a:MavenModule)-[r:DEPENDS_ON {isResolved: false}]->(b:MavenModule)
 RETURN a, r, b;
+
+-- 3b. Find cross-project version divergences (uses SAME_ARTIFACT)
+--     Returns all artifact families where different projects use different versions.
+MATCH (a)-[s:SAME_ARTIFACT]-(b)
+RETURN a.groupId AS groupId, a.artifactId AS artifactId,
+       a.version AS versionA, labels(a) AS labelsA,
+       b.version AS versionB, labels(b) AS labelsB
+ORDER BY groupId, artifactId;
 
 -- 4. Find all versions of a module
 MATCH (m:MavenModule {groupId: 'com.company', artifactId: 'my-app'})

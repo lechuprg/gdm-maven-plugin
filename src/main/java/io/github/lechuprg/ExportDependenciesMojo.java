@@ -123,6 +123,24 @@ public class ExportDependenciesMojo extends AbstractMojo {
     @Parameter(property = "gdm.nodeLabel", defaultValue = "ProjectModule")
     private String nodeLabel;
 
+    /**
+     * List of groupIds that belong to this organisation's own projects.
+     * Every {@code MavenModule} node whose {@code groupId} matches one of these values
+     * will have {@code ProjectModule = true} set in Neo4j, making in-house artifacts
+     * visually distinguishable from third-party dependencies even when they are not
+     * part of the current reactor build.
+     * <p>
+     * Example (pom.xml):
+     * <pre>{@code
+     * <projectGroupIds>
+     *   <projectGroupId>com.mycompany</projectGroupId>
+     *   <projectGroupId>io.myorg</projectGroupId>
+     * </projectGroupIds>
+     * }</pre>
+     */
+    @Parameter(property = "gdm.projectGroupIds")
+    private List<String> projectGroupIds;
+
     // ========== Maven Injected Components ==========
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
@@ -206,6 +224,7 @@ public class ExportDependenciesMojo extends AbstractMojo {
                 .failOnError(failOnError)
                 .serverId(serverId)
                 .nodeLabel(nodeLabel)
+                .projectGroupIds(projectGroupIds)
                 .build();
     }
 
@@ -299,7 +318,8 @@ public class ExportDependenciesMojo extends AbstractMojo {
 
             // 8. Export dependency graph (uses ProjectModule nodes for project modules)
             getLog().info("Exporting dependency graph...");
-            ExportResult result = exporter.exportGraph(filteredGraph, projectModuleGAVs, config.getNodeLabel());
+            ExportResult result = exporter.exportGraph(filteredGraph, projectModuleGAVs, config.getNodeLabel(),
+                    config.getProjectGroupIds());
 
             // 9. Cleanup old versions if configured
             int deletedVersions = 0;
@@ -397,6 +417,11 @@ public class ExportDependenciesMojo extends AbstractMojo {
         getLog().info("  Keep only latest version: " + config.isKeepOnlyLatestVersion());
         getLog().info("  Fail on error: " + config.isFailOnError());
         getLog().info("  Node label: " + config.getNodeLabel());
+
+        if (config.getProjectGroupIds() != null && !config.getProjectGroupIds().isEmpty()) {
+            getLog().info("  Project groupIds (domain): " + config.getProjectGroupIds());
+        }
+
         getLog().info("============================================================");
     }
 

@@ -4,6 +4,7 @@ import io.github.lechuprg.exception.ExportException;
 import io.github.lechuprg.model.DependencyGraph;
 import io.github.lechuprg.model.ProjectStructure;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -36,7 +37,7 @@ public interface DatabaseExporter extends AutoCloseable {
      * @throws ExportException if export fails
      */
     default ExportResult exportGraph(DependencyGraph graph) throws ExportException {
-        return exportGraph(graph, Set.of(), "ProjectModule");
+        return exportGraph(graph, Set.of(), "ProjectModule", List.of());
     }
 
     /**
@@ -50,7 +51,7 @@ public interface DatabaseExporter extends AutoCloseable {
      * @throws ExportException if export fails
      */
     default ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs) throws ExportException {
-        return exportGraph(graph, projectModuleGAVs, "ProjectModule");
+        return exportGraph(graph, projectModuleGAVs, "ProjectModule", List.of());
     }
 
     /**
@@ -64,7 +65,26 @@ public interface DatabaseExporter extends AutoCloseable {
      * @return the export result with statistics
      * @throws ExportException if export fails
      */
-    ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs, String nodeLabel) throws ExportException;
+    default ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs, String nodeLabel) throws ExportException {
+        return exportGraph(graph, projectModuleGAVs, nodeLabel, List.of());
+    }
+
+    /**
+     * Exports the dependency graph to the database.
+     * <p>
+     * MavenModule nodes whose {@code groupId} appears in {@code projectGroupIds} will have
+     * {@code ProjectModule = true} stamped on them, making in-house dependencies visually
+     * distinct from third-party ones even when they are not part of the current reactor build.
+     *
+     * @param graph             the dependency graph to export
+     * @param projectModuleGAVs set of GAV strings for modules that are reactor project modules
+     * @param nodeLabel         the label to use for reactor project module nodes
+     * @param projectGroupIds   groupIds whose MavenModule nodes should be flagged as ProjectModule=true
+     * @return the export result with statistics
+     * @throws ExportException if export fails
+     */
+    ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs, String nodeLabel,
+                             List<String> projectGroupIds) throws ExportException;
 
     /**
      * Exports the project module structure to the database.

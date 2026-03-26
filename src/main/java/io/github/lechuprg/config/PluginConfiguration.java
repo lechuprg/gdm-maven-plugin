@@ -80,6 +80,17 @@ public class PluginConfiguration {
      */
     private String nodeLabel = "ProjectModule";
 
+    /**
+     * List of groupIds that belong to the organisation's own projects.
+     * Any {@code MavenModule} whose {@code groupId} matches one of these values
+     * will have the {@code ProjectModule} property set to {@code true} in Neo4j,
+     * making it visually distinguishable from third-party dependencies even when
+     * it is not part of the current build's reactor.
+     * <p>
+     * Example: {@code com.mycompany}, {@code io.myorg}
+     */
+    private List<String> projectGroupIds = new ArrayList<>();
+
     // Constructors
 
     public PluginConfiguration() {
@@ -188,6 +199,14 @@ public class PluginConfiguration {
         this.nodeLabel = nodeLabel != null ? nodeLabel : "ProjectModule";
     }
 
+    public List<String> getProjectGroupIds() {
+        return projectGroupIds;
+    }
+
+    public void setProjectGroupIds(List<String> projectGroupIds) {
+        this.projectGroupIds = projectGroupIds != null ? projectGroupIds : new ArrayList<>();
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -204,14 +223,15 @@ public class PluginConfiguration {
                 Objects.equals(includeFilters, that.includeFilters) &&
                 Objects.equals(excludeFilters, that.excludeFilters) &&
                 Objects.equals(serverId, that.serverId) &&
-                Objects.equals(nodeLabel, that.nodeLabel);
+                Objects.equals(nodeLabel, that.nodeLabel) &&
+                Objects.equals(projectGroupIds, that.projectGroupIds);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(databaseType, connectionUrl, username, password,
                 transitiveDepth, exportScopes, includeFilters, excludeFilters,
-                keepOnlyLatestVersion, failOnError, serverId, nodeLabel);
+                keepOnlyLatestVersion, failOnError, serverId, nodeLabel, projectGroupIds);
     }
 
     @Override
@@ -229,6 +249,7 @@ public class PluginConfiguration {
                 ", failOnError=" + failOnError +
                 ", serverId='" + serverId + '\'' +
                 ", nodeLabel='" + nodeLabel + '\'' +
+                ", projectGroupIds=" + projectGroupIds +
                 '}';
     }
 
@@ -295,6 +316,11 @@ public class PluginConfiguration {
 
         public Builder nodeLabel(String nodeLabel) {
             config.setNodeLabel(nodeLabel);
+            return this;
+        }
+
+        public Builder projectGroupIds(List<String> projectGroupIds) {
+            config.setProjectGroupIds(projectGroupIds);
             return this;
         }
 

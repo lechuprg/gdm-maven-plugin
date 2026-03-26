@@ -68,6 +68,7 @@ public class Neo4jExporter implements DatabaseExporter {
 
                     SchemaVersion schemaVersion = new SchemaVersion(version, appliedAt);
                     log.debug("Found schema version: {}", schemaVersion);
+                    ensureSameArtifactIndex(session);
                     return schemaVersion;
                 } else {
                     // Create schema version
@@ -77,6 +78,7 @@ public class Neo4jExporter implements DatabaseExporter {
                             "SET v.version = $version, v.appliedAt = datetime()",
                             Map.of("version", SchemaVersion.CURRENT_VERSION)
                     );
+                    ensureSameArtifactIndex(session);
                     return new SchemaVersion(SchemaVersion.CURRENT_VERSION, Instant.now());
                 }
             }
@@ -84,7 +86,8 @@ public class Neo4jExporter implements DatabaseExporter {
     }
 
     @Override
-    public ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs, String nodeLabel) throws ExportException {
+    public ExportResult exportGraph(DependencyGraph graph, Set<String> projectModuleGAVs, String nodeLabel,
+                                    List<String> projectGroupIds) throws ExportException {
         long startTime = System.currentTimeMillis();
 
         try (Session session = driver.session()) {
@@ -97,7 +100,7 @@ public class Neo4jExporter implements DatabaseExporter {
                 // 1. Upsert all modules (skip project modules - they are already ProjectModule nodes)
                 for (MavenModule module : graph.getModules()) {
                     if (!projectModuleGAVs.contains(module.getGAV())) {
-                        upsertModule(tx, module);
+                        upsertModule(tx, module, projectGroupIds);
                         modulesExported++;
                     } else {
                         log.debug("Skipping MavenModule creation for project module: {}", module.getGAV());
@@ -129,6 +132,10 @@ public class Neo4jExporter implements DatabaseExporter {
                 tx.commit();
                 log.info("Transaction committed successfully");
             }
+
+            // 4. Link version siblings with SAME_ARTIFACT relationships (outside main tx,
+            //    runs across the whole graph so it covers cross-project version pairs).
+            linkSameArtifactVersions(session, graph, projectModuleGAVs, nodeLabel);
 
             long executionTime = System.currentTimeMillis() - startTime;
             return ExportResult.success(modulesExported, dependenciesExported, conflictsDetected, executionTime);
@@ -329,17 +336,21 @@ public class Neo4jExporter implements DatabaseExporter {
 
     // ========== Private Methods ==========
 
-    private void upsertModule(Transaction tx, MavenModule module) {
+    private void upsertModule(Transaction tx, MavenModule module, List<String> projectGroupIds) {
+        boolean isInProjectDomain = projectGroupIds != null &&
+                                    projectGroupIds.contains(module.getGroupId());
         tx.run(
                 "MERGE (m:MavenModule {groupId: $groupId, artifactId: $artifactId, version: $version}) " +
                 "SET m.packaging = $packaging, " +
                 "    m.exportTimestamp = datetime(), " +
-                "    m.isLatest = true",
+                "    m.isLatest = true, " +
+                "    m.ProjectModule = $isProjectModule",
                 Map.of(
                         "groupId", module.getGroupId(),
                         "artifactId", module.getArtifactId(),
                         "version", module.getVersion(),
-                        "packaging", module.getPackaging()
+                        "packaging", module.getPackaging(),
+                        "isProjectModule", isInProjectDomain
                 )
         );
     }
@@ -473,6 +484,98 @@ public class Neo4jExporter implements DatabaseExporter {
         log.debug("Created CONTAINS_MODULE: {} -> {}", parent.getArtifactId(), child.getArtifactId());
     }
 
+
+    /**
+     * Creates or ensures the index on (groupId, artifactId) used when linking version siblings.
+     * Called once during schema setup; safe to call multiple times.
+     */
+    private void ensureSameArtifactIndex(Session session) {
+        try {
+            session.run(
+                    "CREATE INDEX same_artifact_ga IF NOT EXISTS " +
+                    "FOR (m:MavenModule) ON (m.groupId, m.artifactId)"
+            );
+        } catch (Exception e) {
+            log.debug("SAME_ARTIFACT index setup skipped (may already exist): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * For every artifact (groupId:artifactId) that appears in more than one version
+     * anywhere in the graph — regardless of node label (MavenModule or ProjectModule) —
+     * this method creates a bidirectional {@code SAME_ARTIFACT} relationship between
+     * every pair of version-sibling nodes.
+     *
+     * <p>This makes cross-project version divergences immediately visible in Neo4j Browser:
+     * a {@code ProjectModule} node for {@code A1 v1.0} will be connected via
+     * {@code SAME_ARTIFACT} to a {@code MavenModule} node for {@code A1 v2.0} that
+     * another project declared as a dependency.</p>
+     *
+     * <p>The relationship carries a {@code versionDiffers} property (always {@code true})
+     * so it can be filtered out when querying same-version nodes, and a {@code versions}
+     * array listing the two endpoint versions for quick inspection without fetching nodes.</p>
+     */
+    private void linkSameArtifactVersions(Session session, DependencyGraph graph,
+                                           Set<String> projectModuleGAVs, String nodeLabel) {
+        // Collect the distinct (groupId, artifactId) pairs that were part of this export.
+        // For each pair we ask Neo4j to (re-)link ALL existing version nodes globally —
+        // this naturally bridges newly exported versions with those already in the DB.
+        Set<String> gaKeys = new java.util.LinkedHashSet<>();
+        for (MavenModule m : graph.getModules()) {
+            gaKeys.add(m.getGroupId() + "::" + m.getArtifactId());
+        }
+
+        if (gaKeys.isEmpty()) {
+            return;
+        }
+
+        // Build a list of {groupId, artifactId} maps for the Cypher UNWIND
+        List<Map<String, Object>> gaList = new ArrayList<>();
+        for (String key : gaKeys) {
+            String[] parts = key.split("::", 2);
+            gaList.add(Map.of("groupId", parts[0], "artifactId", parts[1]));
+        }
+
+        int linked = 0;
+        try (Transaction tx = session.beginTransaction()) {
+            // For each (groupId, artifactId) find ALL nodes with that GA — any label —
+            // and MERGE a SAME_ARTIFACT relationship between every pair where versions differ.
+            // MERGE is undirected-safe here: we use WHERE id(a) < id(b) to avoid duplicates.
+            Result result = tx.run(
+                    "UNWIND $gaList AS ga " +
+                    "CALL { " +
+                    "  WITH ga " +
+                    "  MATCH (a {groupId: ga.groupId, artifactId: ga.artifactId}) " +
+                    "  WHERE (a:MavenModule OR a:" + nodeLabel + ") " +
+                    "  WITH ga, collect(a) AS nodes " +
+                    "  WHERE size(nodes) > 1 " +
+                    "  UNWIND nodes AS a " +
+                    "  UNWIND nodes AS b " +
+                    "  WITH a, b " +
+                    "  WHERE id(a) < id(b) AND a.version <> b.version " +
+                    "  MERGE (a)-[r:SAME_ARTIFACT]-(b) " +
+                    "  ON CREATE SET r.versionDiffers = true, " +
+                    "               r.versions = [a.version, b.version] " +
+                    "  RETURN count(r) AS cnt " +
+                    "} " +
+                    "RETURN sum(cnt) AS total",
+                    Map.of("gaList", gaList)
+            );
+            if (result.hasNext()) {
+                linked = result.single().get("total").asInt(0);
+            }
+            tx.commit();
+        } catch (Exception e) {
+            log.warn("SAME_ARTIFACT linking failed (non-fatal): {}", e.getMessage());
+            return;
+        }
+
+        if (linked > 0) {
+            log.info("Created/updated {} SAME_ARTIFACT relationship(s) across version siblings", linked);
+        } else {
+            log.debug("No SAME_ARTIFACT relationships needed (no cross-version siblings found)");
+        }
+    }
 
     private record VersionInfo(String version, long nodeId) {}
 }

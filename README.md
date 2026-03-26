@@ -83,7 +83,19 @@ The required database schema is defined in `database-schema.sql`. You must creat
 ### Neo4j Model
 - **Nodes**: `(:MavenModule {groupId, artifactId, version, ...})`
 - **Project Module Nodes**: `(:<nodeLabel> {groupId, artifactId, version, ProjectModule: true, ...})` - The label is configurable via `nodeLabel` parameter (default: `ProjectModule`). All project module nodes have a `ProjectModule: true` property for easy identification.
-- **Relationships**: `-[:DEPENDS_ON {scope, depth, isResolved, ...}]->`, `-[:CONTAINS_MODULE]->`
+- **Relationships**:
+  - `-[:DEPENDS_ON {scope, depth, isResolved, ...}]->` — declared dependency between two modules
+  - `-[:CONTAINS_MODULE]->` — parent/child relationship inside a multi-module project
+  - `-[:SAME_ARTIFACT {versionDiffers: true, versions: [...]}]-` — **cross-project version bridge**: automatically created between every pair of nodes (any label) that represent the same `groupId:artifactId` but at different versions. Use this to immediately spot when two projects pull different versions of the same artifact.
+
+#### Cross-project version divergence query
+```cypher
+MATCH (a)-[s:SAME_ARTIFACT]-(b)
+RETURN a.groupId AS groupId, a.artifactId AS artifactId,
+       a.version  AS versionA, labels(a) AS labelsA,
+       b.version  AS versionB, labels(b) AS labelsB
+ORDER BY groupId, artifactId
+```
 
 ### Oracle Model
 - **Tables**: `maven_modules`, `maven_dependencies`, `gdm_schema_version`
